@@ -1,0 +1,1 @@
+# Support-resistance-auto-generator
