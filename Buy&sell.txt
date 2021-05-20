@@ -1,0 +1,298 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LonesomeTheBlue
+
+can_we_start(prd)=>
+    UTC = 0.
+    // get UTC time
+    int timenow_ = timenow + round(UTC * 3600000)
+    int time_ = time + round(UTC * 3600000)
+    
+    // calculate D/H/M/S for the bar which we are on and time now
+    int daynow_ = floor((timenow_ + 86400000 * 3) / 86400000) % 7
+    int day_ = floor((time_ + 86400000 * 3) / 86400000) % 7
+    int hournow_ = floor(timenow_ / 3600000) % 24
+    int hour_ = floor(time_ / 3600000) % 24
+    int minutenow_ = floor(timenow_ / 60000) % 60
+    int minute_ = floor(time_ / 60000) % 60
+    int secondnow_ = floor(timenow_ / 60000) % 60
+    int second_ = floor(time_ / 60000) % 60
+    int hmstime_ = hour_ * 3600000 + minute_ * 60000 + second_ * 1000
+    int hmstimenow_ = hournow_ * 3600000 + minutenow_ * 60000 + secondnow_  * 1000
+    
+    var int starttime = na
+    if bar_index > prd and (na(starttime) or time_ < nz(starttime))
+        if timeframe.isdaily
+            if day_ == daynow_ // session day
+                diff = time_ - time_[prd]
+                starttime := timenow_ - diff
+            if daynow_ > day_ and daynow_ > day_[1] and day_[1] > day_ // weekend
+                diff = time_[1] - time_[prd + 1] + (daynow_ - day_[1]) * 86400000
+                starttime := timenow_ - diff
+        
+        if timeframe.isintraday 
+            if day_ == daynow_ and day_[1] == daynow_ and hmstime_ > hmstimenow_ and hmstime_[1] <= hmstimenow_ // in session
+                diff = time_[1] - time_[prd + 1] + round(UTC * 3600000)
+                starttime := timenow_ - diff
+            if day_ != daynow_ and day_[1] == daynow_ and hmstime_ < hmstimenow_ and hmstime_[1] <= hmstimenow_ // in same day and after session
+                diff = time_[1] - time_[prd + 1] + (hmstimenow_ - hmstime_[1]) + round(UTC * 3600000)
+                starttime := timenow_ - diff
+            if day_ == daynow_ and day_[1] + 1 == daynow_ and hmstime_ > hmstimenow_ and hmstime_[1] >= hmstimenow_  // in week (not first day) and before session
+                diff = time_[1] - time_[prd + 1] + (24 * 3600000 - hmstime_[1]) + hmstimenow_ + round(UTC * 3600000)
+                starttime := timenow_ - diff
+            if day_ == daynow_ and day_[1] > daynow_ and hmstime_ > hmstimenow_ and hmstime_[1] >= hmstimenow_ // the day after weekend before session
+                diff = time_[1] - time_[prd + 1] + 2 * 86400000 + (24 * 3600000 - hmstime_[1]) + hmstimenow_ + round(UTC * 3600000)
+                starttime := timenow_ - diff
+            if daynow_ > day_ and daynow_ > day_[1] and day_[1] > day_ // weekend
+                diff = time_[1] - time_[prd + 1] + (daynow_ - day_[1] - 1) * 86400000 + (24 * 3600000 - hmstime_[1]) + hmstimenow_ + round(UTC * 3600000)
+                starttime := timenow_ - diff
+                
+        if timeframe.isweekly
+            starttime := timenow_ - timeframe.multiplier * prd * 604800000      // 1 week = 604800000ms
+        
+        if timeframe.ismonthly
+            starttime := timenow_ - timeframe.multiplier * prd * 2629743000     // 1 month = 2629743000ms
+            
+    return = not na(starttime) and time >= starttime
+//@version=4
+study("Support Resistance Channels", "SRchannel", overlay = true, max_bars_back = 501)
+prd = input(defval = 10, title="Pivot Period", minval = 4, maxval = 30, group = "Settings 🔨", tooltip="Used while calculating Pivot Points, checks left&right bars")
+ppsrc = input(defval = 'High/Low', title="Source", options = ['High/Low', 'Close/Open'], group = "Settings 🔨", tooltip="Source for Pivot Points")
+ChannelW = input(defval = 3, title = "Maximum Channel Width %", minval = 1, maxval = 8, group = "Settings 🔨", tooltip="Calculated using Highest/Lowest levels in 300 bars")
+maxnumsr = input(defval = 7, title = "Number of S/R to show", minval = 1, maxval = 10, group = "Settings 🔨", tooltip="Number of Strongest S/R levels to show")
+loopback = input(defval = 292, title = "Loopback Period", minval = 100, maxval = 400, group = "Settings 🔨", tooltip="While calculating S/R levels it checks Pivots in Loopback Period")
+showlast = input(defval = 292, title = "Show S/R on last # Bars", minval = 20, maxval = 400, group = "Settings 🔨", tooltip="To see S/R levels only on last N bars")
+startdatebar = input(defval = "Bars", title = "Check the Date or Bars to Start", options = ["Bars", "Date"], group = "Settings 🔨")
+startdate = input(defval=timestamp("1 Jan 2020 00:00 +0000"), title="  Start Date", type=input.time, group = "Settings 🔨", tooltip="Calculation starts from this date")
+startbar = input(defval = 400, title="  Starting Bar", minval = 200, maxval = 1000, group = "Settings 🔨", tooltip="Starts calculating on last Nth bar")
+showweaksr = input(defval = true, title = "Show Weak S/R levels")
+res_col = input(defval = color.new(color.red, 60), title = "Resistance Color", group = "Colors 🟡🟢🟣")
+sup_col = input(defval = color.new(color.lime, 60), title = "Support Color", group = "Colors 🟡🟢🟣")
+inch_col = input(defval = color.new(color.gray, 60), title = "Color When Price in Channel", group = "Colors 🟡🟢🟣")
+showpp = input(defval = false, title = "Show Pivot Points", group = "Extras ⏶⏷")
+showsrbroken = input(defval = false, title = "Show Broken Support/Resistance", group = "Extras ⏶⏷")
+
+// get Pivot High/low
+float src1 =  ppsrc == 'High/Low' ? high : max(close, open)
+float src2 =  ppsrc == 'High/Low' ? low: min(close, open)
+float ph = na
+float pl = na
+float ph_ = pivothigh(src1, prd, prd)
+float pl_ = pivotlow(src2, prd, prd) 
+if (startdatebar == "Bars" and can_we_start(startbar)) or (startdatebar == "Date" and time >= startdate)
+    ph := ph_
+    pl := pl_
+
+// draw Pivot points
+plotshape(ph and showpp, text = "H",  style = shape.labeldown, color = na, textcolor = color.red, location = location.abovebar, transp = 0, offset = -prd)
+plotshape(pl and showpp, text = "L",  style = shape.labelup, color = na, textcolor = color.lime, location = location.belowbar, transp = 0, offset = -prd)
+
+//calculate maximum S/R channel width
+prdhighest =  highest(300)
+prdlowest = lowest(300)
+cwidth = (prdhighest - prdlowest) * ChannelW / 100
+
+// get/keep Pivot levels
+var pivotvals= array.new_float(0)
+var pivotlocs= array.new_float(0)
+if ph or pl
+    array.unshift(pivotvals, ph ? ph : pl)
+    array.unshift(pivotlocs, bar_index)
+    for x = array.size(pivotvals) - 1 to 0
+        if bar_index - array.get(pivotlocs, x) > loopback // check last 300 bars
+            array.pop(pivotvals)
+            array.pop(pivotlocs)
+            continue
+        break
+
+//find/create SR channel of a pivot point
+get_sr_vals(ind)=>
+    float lo = array.get(pivotvals, ind)
+    float hi = lo
+    int numpp = 0
+    for y = 0 to array.size(pivotvals) - 1
+        if y == ind
+            continue
+        float cpp = array.get(pivotvals, y)
+        float wdth = cpp <= hi ? hi - cpp : cpp - lo
+        if wdth <= cwidth // fits the max channel width?
+            if cpp <= hi
+                lo := min(lo, cpp)
+            else
+                hi := max(hi, cpp)
+                
+            numpp := numpp + 20 // each pivot point added as 20
+    [hi, lo, numpp] 
+
+hgest = highest(292)
+lwest = lowest(292)
+
+// keep old SR channels and calculate/sort new channels if we met new pivot point
+var suportresistance = array.new_float(maxnumsr * 2, 0) // min/max levels
+oldsuportresistance = array.copy(suportresistance)
+if ph or pl
+    supres = array.new_float(0)  // number of pivot, strength, min/max levels
+    // get levels and strengs
+    for x = 0 to array.size(pivotvals) - 1
+        [hi, lo, strength] = get_sr_vals(x)
+        array.push(supres, strength)
+        array.push(supres, hi)
+        array.push(supres, lo)
+    
+    // add each HL to strengh
+    for x = 0 to array.size(pivotvals) - 1
+        h = array.get(supres, x * 3 + 1)
+        l = array.get(supres, x * 3 + 2)
+        s = 0
+        for y = 0 to loopback
+            if (high[y] <= h and high[y] >= l) or
+               (low[y] <= h and low[y] >= l)
+                s := s + 1
+        array.set(supres, x * 3, array.get(supres, x * 3) + s)
+    
+    //reset SR levels
+    array.fill(suportresistance, 0)
+    // get strongest SRs
+    src = 0
+    for x = 0 to maxnumsr - 1
+        stv = -1. // value
+        stl = -1 // location
+        for y = 0 to array.size(pivotvals) - 1
+            if array.get(supres, y * 3) > stv and 
+              (showweaksr or array.get(supres, y * 3) >= 40 or hgest == array.get(supres, y * 3 + 1) or hgest == array.get(supres, y * 3 + 2) or lwest == array.get(supres, y * 3 + 1) or lwest == array.get(supres, y * 3 + 2))
+                stv := array.get(supres, y * 3)
+                stl := y
+        if stl >= 0
+            //get sr level
+            hh = array.get(supres, stl * 3 + 1)
+            ll = array.get(supres, stl * 3 + 2)
+            array.set(suportresistance, src * 2, hh)
+            array.set(suportresistance, src * 2 + 1, ll)
+            
+            // make included pivot points' strength zero 
+            for y = 0 to array.size(pivotvals) - 1
+                if array.get(pivotvals, y) <= hh and array.get(pivotvals, y) >= ll
+                    array.set(supres, y * 3, 0)
+
+            src := src + 1
+
+    // sort them in correct order, plot/fill will be seen better
+    for x = 0 to maxnumsr - 1
+        for y = 0 to maxnumsr - 1
+            if array.get(suportresistance, y * 2) == array.get(oldsuportresistance, x * 2) and
+               array.get(suportresistance, y * 2 + 1) == array.get(oldsuportresistance, x * 2 + 1)
+                tmp1 = array.get(suportresistance, x * 2)
+                tmp2 = array.get(suportresistance, x * 2 + 1)
+                array.set(suportresistance, x * 2, array.get(suportresistance, y * 2))
+                array.set(suportresistance, x * 2 + 1, array.get(suportresistance, y * 2 + 1))
+                array.set(suportresistance, y * 2, tmp1)
+                array.set(suportresistance, y * 2 + 1, tmp2)
+                break
+    
+get_level(ind)=>
+    float ret = na
+    if ind < array.size(suportresistance)
+        if array.get(suportresistance, ind) != 0
+            ret := array.get(suportresistance, ind)
+    ret
+    
+get_color(ind)=>
+    color ret = na
+    if ind < array.size(suportresistance)
+        if array.get(suportresistance, ind) != 0
+            ret := array.get(suportresistance, ind) <= 0 or array.get(suportresistance, ind) != array.get(oldsuportresistance, ind)? na :
+                   array.get(suportresistance, ind) > close and array.get(suportresistance, ind + 1) > close ? res_col :
+                   array.get(suportresistance, ind) < close and array.get(suportresistance, ind + 1) < close ? sup_col :
+                   inch_col
+    ret
+    
+srnum = 0
+l1 = get_level(srnum)
+l2 = get_level(srnum + 1)
+p11 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p12 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p11, p12, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p21 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p22 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p21, p22, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p31 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p32 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p31, p32, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p41 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p42 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p41, p42, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p51 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p52 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p51, p52, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p61 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p62 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p61, p62, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p71 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p72 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p71, p72, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p81 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p82 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p81, p82, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p91 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p92 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p91, p92, get_color(srnum), show_last = showlast, editable = false)
+
+srnum := srnum + 2
+l1 := get_level(srnum)
+l2 := get_level(srnum + 1)
+p101 = plot(l1, color = get_color(srnum), show_last = showlast, editable = false)
+p102 = plot(l2, color = get_color(srnum), show_last = showlast, editable = false)
+fill(p101, p102, get_color(srnum), show_last = showlast, editable = false)
+
+resistancebroken = false
+supportbroken = false
+
+// check if it's not in a channel
+not_in_a_channel = true
+for x = 0 to maxnumsr - 1
+    if close <= array.get(suportresistance, x * 2) and close >= array.get(suportresistance, x * 2 + 1) 
+        not_in_a_channel := false
+
+// if price is not in a channel then check broken ones
+if not_in_a_channel
+    for x = 0 to maxnumsr - 1
+        if close[1] <= array.get(suportresistance, x * 2) and close > array.get(suportresistance, x * 2)
+            resistancebroken := true
+        if close[1] >= array.get(suportresistance, x * 2 + 1) and close < array.get(suportresistance, x * 2 + 1)
+            supportbroken := true
+
+alertcondition(resistancebroken, title = "Resistance Broken", message = "Resistance Broken")
+alertcondition(supportbroken, title = "Support Broken", message = "Support Broken")
+plotshape(showsrbroken and resistancebroken, style = shape.triangleup, location = location.belowbar, color = color.new(color.lime, 0), size = size.tiny)
+plotshape(showsrbroken and supportbroken, style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), size = size.tiny)
